@@ -1,0 +1,1 @@
+{"hook_event_name":"PreToolUse","cwd":"/home/you/code/my-app","tool_name":"AskUserQuestion","tool_input":{"questions":[{"header":"Database","question":"Which database should we use?","options":[{"label":"Postgres"},{"label":"SQLite"}]}]}}

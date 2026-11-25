@@ -1,0 +1,85 @@
+name: tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -I -B -m unittest discover -s tests -v
+  windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]   # Windows PowerShell 5.1 and PowerShell 7
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./tests/install.Tests.ps1
+  # The exact one-line commands from the README, against the files published on main.
+  readme-command-macos:
+    if: github.ref == 'refs/heads/main' && github.repository == 'metincanaktas/ask-bell'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: wait until the published file is the one of this commit (raw is cached for minutes)
+        run: |
+          url=$(grep -oE 'https://[^ ]+/install\.sh' README.md | head -n 1)
+          for i in $(seq 1 40); do
+            if curl -fsSL "$url" | cmp -s - install.sh; then exit 0; fi
+            sleep 10
+          done
+          echo "published file differs from this commit: $url"; exit 1
+      - run: |
+          set -eu
+          export CLAUDE_CONFIG_DIR="$RUNNER_TEMP/claude"
+          install=$(grep -E '^curl -fsSL [^ ]+/install\.sh \| sh$' README.md)
+          remove=$(grep -E '^curl -fsSL [^ ]+/install\.sh \| sh -s -- --uninstall$' README.md)
+          echo "$install"; sh -c "$install"
+          test "$(grep -c '# ask-bell' "$CLAUDE_CONFIG_DIR/settings.json")" = 2
+          out=$(sh "$CLAUDE_CONFIG_DIR/ask-bell/bell.sh" --dry-run < examples/question.json)
+          echo "$out"; echo "$out" | grep -q 'is asking a question'
+          echo "$remove"; sh -c "$remove"
+          if grep -q ask-bell "$CLAUDE_CONFIG_DIR/settings.json"; then exit 1; fi
+          test ! -e "$CLAUDE_CONFIG_DIR/ask-bell"
+  readme-command-windows:
+    if: github.ref == 'refs/heads/main' && github.repository == 'metincanaktas/ask-bell'
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: wait until the published file is the one of this commit (raw is cached for minutes)
+        run: |
+          $url = [regex]::Match((Get-Content -Raw README.md), 'https://\S+/install\.ps1').Value
+          $want = (Get-Content -Raw install.ps1).Replace("`r", '')
+          foreach ($i in 1..40) {
+            try { if ((Invoke-RestMethod $url).Replace("`r", '') -ceq $want) { exit 0 } } catch { Write-Host $_ }
+            Start-Sleep -Seconds 10
+          }
+          throw "published file differs from this commit: $url"
+      - run: |
+          $ErrorActionPreference = 'Stop'
+          $env:CLAUDE_CONFIG_DIR = Join-Path $env:RUNNER_TEMP 'claude'
+          $settings = Join-Path $env:CLAUDE_CONFIG_DIR 'settings.json'
+          $install = @(Get-Content README.md | Where-Object { $_ -match '^irm \S+/install\.ps1 \| iex$' })[0]
+          $remove = @(Get-Content README.md | Where-Object { $_ -match '^& \(\[scriptblock\]::Create\(\(irm \S+/install\.ps1\)\)\) -Uninstall$' })[0]
+          Write-Host $install; Invoke-Expression $install
+          $ours = @(Select-String -LiteralPath $settings -Pattern 'ask-bell/bell\.ps1' -AllMatches | ForEach-Object { $_.Matches }).Count
+          if ($ours -ne 2) { throw "expected 2 hooks, found $ours" }
+          $env:ASK_BELL_DRY_RUN = '1'
+          $out = (Get-Content examples\question.json | powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $env:CLAUDE_CONFIG_DIR 'ask-bell\bell.ps1') -DryRun) -join "`n"
+          Write-Host $out
+          if ($out -notmatch 'is asking a question') { throw 'hook text missing' }
+          Write-Host $remove; Invoke-Expression $remove
+          if (Select-String -LiteralPath $settings -Pattern 'ask-bell' -Quiet) { throw 'hooks left after uninstall' }
+          if (Test-Path (Join-Path $env:CLAUDE_CONFIG_DIR 'ask-bell')) { throw 'hook folder left' }
