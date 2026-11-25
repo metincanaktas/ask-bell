@@ -44,9 +44,16 @@ param(
 param([switch]$DryRun)
 $ErrorActionPreference = 'SilentlyContinue'
 
+# Read the bytes and decode them as UTF-8 here: the console code page does not
+# matter, and a byte order mark in front of the JSON is dropped.
 $raw = ''
-try { [Console]::InputEncoding = New-Object System.Text.UTF8Encoding $false } catch {}
-try { if ([Console]::IsInputRedirected) { $raw = [Console]::In.ReadToEnd() } } catch {}
+try {
+    if ([Console]::IsInputRedirected) {
+        $bytes = New-Object System.IO.MemoryStream
+        [Console]::OpenStandardInput().CopyTo($bytes)
+        $raw = (New-Object System.Text.UTF8Encoding $false).GetString($bytes.ToArray()).TrimStart([char]0xFEFF)
+    }
+} catch {}
 $d = $null
 if ($raw.Length -gt 0 -and $raw.Length -le 200000) { try { $d = ConvertFrom-Json -InputObject $raw } catch { $d = $null } }
 
