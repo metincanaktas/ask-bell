@@ -214,8 +214,10 @@ try {
         $out = ($case.Json | & $h.command @argv) -join "`n"
         Check "hook text for $($case.Event)" ($LASTEXITCODE -eq 0 -and $out.Trim() -eq $case.Want) $out
     }
-    # Windows PowerShell 5.1 can put a byte order mark in front of piped text (seen on GitHub's runners).
-    $case = $cases[0]
+    # Windows PowerShell 5.1 may put a byte order mark in front of text it sends to another program.
+    $want = 'Claude Code | my-app is asking a question: Database: Which database should we use?'
+    $h = ($ours | Where-Object { $_.Event -eq 'PreToolUse' }).Handler
+    $argv = @($h.args)
     foreach ($marks in 0, 1, 2) {
         $start = New-Object System.Diagnostics.ProcessStartInfo
         $start.FileName = $h.command
@@ -224,12 +226,12 @@ try {
         $start.RedirectStandardInput = $true
         $start.RedirectStandardOutput = $true
         $p = [System.Diagnostics.Process]::Start($start)
-        [byte[]]$bytes = @(@(0xEF, 0xBB, 0xBF) * $marks) + @([System.Text.Encoding]::UTF8.GetBytes([string]$case.Json))
+        [byte[]]$bytes = @(@(0xEF, 0xBB, 0xBF) * $marks) + @([System.Text.Encoding]::UTF8.GetBytes([string]$question))
         $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
         $p.StandardInput.BaseStream.Close()
         $out = $p.StandardOutput.ReadToEnd()
         $p.WaitForExit()
-        Check "hook reads input behind $marks byte order mark(s)" ($p.ExitCode -eq 0 -and $out.Trim() -eq $case.Want) $out
+        Check "hook reads input behind $marks byte order mark(s)" ($p.ExitCode -eq 0 -and $out.Trim() -eq $want) $out
     }
     foreach ($junk in @('', 'not json', '[]', 'null', '{"tool_name": 5, "cwd": []}')) {
         $out = ($junk | & $h.command @argv) -join "`n"
